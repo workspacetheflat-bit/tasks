@@ -2,7 +2,6 @@
 
 import { createContext, type CSSProperties, type FormEvent, type ReactNode, useCallback, useContext, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Volume2, VolumeX } from "lucide-react";
 import {
   CELEBRATION_SOUND_SRC,
   personalTodoCelebrationAnimation,
@@ -111,29 +110,12 @@ export function TaskCelebrationProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const toggleMuted = () => {
-    const nextMuted = !mutedRef.current;
-    mutedRef.current = nextMuted;
-    setMuted(nextMuted);
-    try {
-      window.localStorage.setItem(soundPreferenceKey, String(nextMuted));
-    } catch (error) {
-      console.warn("Could not save personal todo sound preference.", error);
-    }
-  };
+
 
   return (
     <CelebrationContext.Provider value={{ prepareSound, celebrate }}>
       {children}
-      <button
-        className="personal-todo-sound-toggle"
-        type="button"
-        onClick={toggleMuted}
-        aria-pressed={muted}
-        aria-label={muted ? "تشغيل صوت الاحتفال" : "كتم صوت الاحتفال"}
-      >
-        {muted ? <VolumeX aria-hidden="true" size={16} /> : <Volume2 aria-hidden="true" size={16} />}
-      </button>
+
       {showCelebration && <div className={`todo-celebration todo-celebration-${personalTodoCelebrationAnimation(reducedMotion)}`} role="status" aria-live="polite">
         <div className="todo-celebration-card">
           <span className="todo-celebration-heart" aria-hidden="true">❤️</span>
