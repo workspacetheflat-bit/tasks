@@ -11,10 +11,23 @@ const userSchema = new Schema(
   { timestamps: true },
 );
 
+const personalTodoSchema = new Schema(
+  {
+    memberId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    title: { type: String, required: true, trim: true, minlength: 1, maxlength: 120 },
+    description: { type: String, default: "", maxlength: 1000 },
+    dueDate: { type: String, default: null, match: /^\d{4}-\d{2}-\d{2}$/ },
+    isCompleted: { type: Boolean, default: false, required: true },
+  },
+  { timestamps: true },
+);
+personalTodoSchema.index({ memberId: 1, isCompleted: 1, dueDate: 1 });
+
 const taskSchema = new Schema(
   {
     key: { type: String, required: true, unique: true, index: true },
     nameAr: { type: String, required: true, trim: true },
+    completionMode: { type: String, enum: ["self", "review"], default: "self", required: true },
     dailyValue: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },
     deductionMultiplier: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },
     durationMinutes: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },
@@ -33,6 +46,7 @@ const occurrenceSchema = new Schema(
     taskNameSnapshot: { type: String, required: true },
     taskValueSnapshot: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },
     deductionMultiplierSnapshot: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },
+    completionModeSnapshot: { type: String, enum: ["self", "review"], default: "self", required: true },
     dateKey: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
     status: { type: String, enum: ["incomplete", "completed", "needs_review"], default: "incomplete", required: true },
     memberNote: { type: String, default: "" },
@@ -110,6 +124,7 @@ auditEventSchema.index({ entityType: 1, entityId: 1, createdAt: -1 });
 auditEventSchema.index({ createdAt: -1 });
 
 export const User = mongoose.models.User || mongoose.model("User", userSchema);
+export const PersonalTodo = mongoose.models.PersonalTodo || mongoose.model("PersonalTodo", personalTodoSchema);
 export const TaskDefinition = mongoose.models.TaskDefinition || mongoose.model("TaskDefinition", taskSchema);
 export const DailyTaskOccurrence = mongoose.models.DailyTaskOccurrence || mongoose.model("DailyTaskOccurrence", occurrenceSchema);
 export const Deduction = mongoose.models.Deduction || mongoose.model("Deduction", deductionSchema);

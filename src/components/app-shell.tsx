@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChartNoAxesCombined, ClipboardCheck, LayoutDashboard, LogOut, ReceiptText, Settings2, ListChecks } from "lucide-react";
+import { ChartNoAxesCombined, ClipboardCheck, LayoutDashboard, LogOut, ReceiptText, Settings2, ListChecks, ClipboardList } from "lucide-react";
 import { logoutAction } from "@/server/actions";
 import type { AuthenticatedUser } from "@/lib/auth";
 
@@ -13,6 +13,7 @@ const adminLinks = [
 
 const memberLinks = [
   { href: "/my-tasks", label: "مهامي اليومية", Icon: ListChecks },
+  { href: "/personal-tasks", label: "مهامي الشخصية", Icon: ClipboardList },
   { href: "/deductions", label: "سجل الخصومات", Icon: ReceiptText },
 ];
 

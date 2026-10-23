@@ -26,8 +26,17 @@ export function Notice({ code }: { code?: string | string[] }) {
   if (value === "saved" || value === "1") {
     return <div className="notice success" role="status">تم حفظ التغييرات بنجاح.</div>;
   }
+  if (value === "todo=saved") {
+    return <div className="notice success" role="status">تم حفظ المهمة الشخصية.</div>;
+  }
   const text = value === "duplicate"
     ? "يوجد سجل سابق لهذه المهمة أو اليوم؛ لا يمكن تكرار العملية."
+    : value === "todo-invalid"
+      ? "تحقق من عنوان المهمة الشخصية والوصف وتاريخ الاستحقاق."
+    : value === "todo-save"
+      ? "تعذر حفظ المهمة الشخصية. تحقق من البيانات ثم أعد المحاولة."
+    : value === "review-required"
+    ? "هذه المهمة تتطلب مراجعة المسؤول، أو تم تحديث حالتها مسبقاً."
     : value === "invalid"
       ? "يرجى مراجعة البيانات المدخلة والمحاولة مرة أخرى."
       : value === "configuration"

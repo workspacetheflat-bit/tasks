@@ -109,7 +109,7 @@ Completion status:
 - `completed`
 - `needs_review`
 
-The Member can mark a task completed or submit it for review. The Admin can review and correct completion records, with appropriate audit information.
+Each task definition uses `completionMode` (`self` or `review`). Existing definitions and historical occurrences default to `self`; the mode is snapshotted on new occurrences. Members complete `self` tasks directly and may only submit `review` tasks for review. An Admin approves or rejects pending review-mode submissions, with reviewer identity, timestamps, notes, and audit information recorded.
 
 Store timestamps consistently and use the configured application timezone for day boundaries. Default timezone: `Africa/Cairo`.
 

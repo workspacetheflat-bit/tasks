@@ -8,7 +8,21 @@ import { createSession, destroySession, requireUser } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
 import { calculateDeduction } from "@/lib/finance";
 import { isValidDateKey } from "@/lib/date";
-import { AuditEvent, CourseBreak, CourseCompletion, DailyTaskOccurrence, Deduction, TaskDefinition, User, toObjectId } from "@/models";
+import { AuditEvent, CourseBreak, CourseCompletion, DailyTaskOccurrence, Deduction, PersonalTodo, TaskDefinition, User, toObjectId } from "@/models";
+import {
+  createPersonalTodoRecord,
+  personalTodoInputSchema,
+  personalTodoOwnerFilter,
+  togglePersonalTodo,
+  updatePersonalTodoFields,
+} from "@/lib/personal-todos";
+import {
+  assertMemberCanCompleteDirectly,
+  assertMemberCanRequestReview,
+  effectiveCompletionMode,
+  resolveReviewDecision,
+  TaskCompletionPolicyError,
+} from "@/lib/task-completion";
 
 const loginSchema = z.object({
   username: z.string().trim().min(1).max(160),
@@ -76,7 +90,7 @@ export async function updateCompletionAction(formData: FormData): Promise<void> 
   const user = await requireUser("member");
   const schema = z.object({
     occurrenceId: z.string().min(1),
-    status: z.enum(["incomplete", "completed", "needs_review"]),
+    status: z.enum(["incomplete", "completed"]),
     note: z.string().max(500).optional(),
   });
   const parsed = schema.safeParse({
@@ -94,22 +108,167 @@ export async function updateCompletionAction(formData: FormData): Promise<void> 
       memberId: toObjectId(user.id),
     });
     if (!occurrence) throw new Error("سجل المهمة غير موجود.");
+    assertMemberCanCompleteDirectly(occurrence.completionModeSnapshot);
     const before = { status: occurrence.status, memberNote: occurrence.memberNote };
-    occurrence.status = parsed.data.status;
-    occurrence.memberNote = parsed.data.note ?? "";
-    occurrence.completedAt = parsed.data.status === "completed" ? new Date() : null;
-    await occurrence.save();
+    const updated = await DailyTaskOccurrence.findOneAndUpdate(
+      {
+        _id: occurrence._id,
+        memberId: toObjectId(user.id),
+        status: occurrence.status,
+        $or: [{ completionModeSnapshot: "self" }, { completionModeSnapshot: { $exists: false } }],
+      },
+      {
+        $set: {
+          status: parsed.data.status,
+          memberNote: parsed.data.note ?? "",
+          completedAt: parsed.data.status === "completed" ? new Date() : null,
+        },
+      },
+      { new: true, runValidators: true },
+    );
+    if (!updated) throw new TaskCompletionPolicyError("تم تحديث المهمة في طلب آخر؛ أعد تحميل الصفحة.");
     await writeAudit(user.id, "completion.updated", "occurrence", String(occurrence._id), {
       before,
-      after: { status: occurrence.status, memberNote: occurrence.memberNote },
+      after: { status: updated.status, memberNote: updated.memberNote },
     });
     dateKey = occurrence.dateKey;
   } catch (error) {
     await reportMutationError(error, "update-completion");
+    if (error instanceof TaskCompletionPolicyError) redirect("/my-tasks?error=review-required");
     redirect("/my-tasks?error=save");
   }
   revalidatePath("/my-tasks");
   redirect(`/my-tasks?date=${dateKey}&saved=1`);
+}
+
+export async function submitTaskReviewAction(formData: FormData): Promise<void> {
+  const user = await requireUser("member");
+  const parsed = z.object({
+    occurrenceId: z.string().min(1),
+    note: z.string().max(500).optional(),
+  }).safeParse({
+    occurrenceId: field(formData, "occurrenceId"),
+    note: field(formData, "note"),
+  });
+  if (!parsed.success) redirect("/my-tasks?error=invalid");
+
+  let dateKey = "";
+  try {
+    await connectToDatabase();
+    const occurrence = await DailyTaskOccurrence.findOne({
+      _id: toObjectId(parsed.data.occurrenceId),
+      memberId: toObjectId(user.id),
+    });
+    if (!occurrence) throw new Error("سجل المهمة غير موجود.");
+    assertMemberCanRequestReview(occurrence.completionModeSnapshot, occurrence.status);
+    const updated = await DailyTaskOccurrence.findOneAndUpdate(
+      {
+        _id: occurrence._id,
+        memberId: toObjectId(user.id),
+        status: "incomplete",
+        completionModeSnapshot: "review",
+      },
+      {
+        $set: {
+          status: "needs_review",
+          memberNote: parsed.data.note ?? "",
+          reviewNote: "",
+          completedAt: null,
+          reviewedAt: null,
+          reviewedBy: null,
+        },
+      },
+      { new: true, runValidators: true },
+    );
+    if (!updated) throw new TaskCompletionPolicyError("تم إرسال المهمة أو تحديثها في طلب آخر.");
+    await writeAudit(user.id, "completion.review_requested", "occurrence", String(updated._id), {
+      before: { status: occurrence.status },
+      after: { status: updated.status, memberNote: updated.memberNote },
+    });
+    dateKey = occurrence.dateKey;
+  } catch (error) {
+    await reportMutationError(error, "submit-task-review");
+    redirect(`/my-tasks?error=${error instanceof TaskCompletionPolicyError ? "review-required" : "save"}`);
+  }
+  revalidatePath("/my-tasks");
+  revalidatePath("/daily-review");
+  redirect(`/my-tasks?date=${dateKey}&saved=1`);
+}
+
+export async function createPersonalTodoAction(formData: FormData): Promise<void> {
+  const user = await requireUser("member");
+  const parsed = personalTodoInputSchema.safeParse({
+    title: field(formData, "title"),
+    description: field(formData, "description"),
+    dueDate: field(formData, "dueDate"),
+  });
+  if (!parsed.success) redirect("/personal-tasks?error=todo-invalid");
+
+  try {
+    await connectToDatabase();
+    await PersonalTodo.create(createPersonalTodoRecord(user.id, parsed.data));
+  } catch (error) {
+    await reportMutationError(error, "create-personal-todo");
+    redirect("/personal-tasks?error=todo-save");
+  }
+  revalidatePath("/personal-tasks");
+  redirect("/personal-tasks?todo=saved");
+}
+
+export async function updatePersonalTodoAction(formData: FormData): Promise<void> {
+  const user = await requireUser("member");
+  const todoId = field(formData, "todoId");
+  const parsed = personalTodoInputSchema.safeParse({
+    title: field(formData, "title"),
+    description: field(formData, "description"),
+    dueDate: field(formData, "dueDate"),
+  });
+  if (!parsed.success) redirect("/personal-tasks?error=todo-invalid");
+
+  try {
+    await connectToDatabase();
+    const todo = await PersonalTodo.findOne(personalTodoOwnerFilter(user.id, todoId));
+    if (!todo) throw new Error("المهمة الشخصية غير موجودة.");
+    updatePersonalTodoFields(todo, parsed.data);
+    await todo.save();
+  } catch (error) {
+    await reportMutationError(error, "update-personal-todo");
+    redirect("/personal-tasks?error=todo-save");
+  }
+  revalidatePath("/personal-tasks");
+  redirect("/personal-tasks?todo=saved");
+}
+
+export async function togglePersonalTodoAction(formData: FormData): Promise<void> {
+  const user = await requireUser("member");
+  const todoId = field(formData, "todoId");
+  try {
+    await connectToDatabase();
+    const todo = await PersonalTodo.findOne(personalTodoOwnerFilter(user.id, todoId));
+    if (!todo) throw new Error("المهمة الشخصية غير موجودة.");
+    togglePersonalTodo(todo);
+    await todo.save();
+  } catch (error) {
+    await reportMutationError(error, "toggle-personal-todo");
+    redirect("/personal-tasks?error=todo-save");
+  }
+  revalidatePath("/personal-tasks");
+  redirect("/personal-tasks?todo=saved");
+}
+
+export async function deletePersonalTodoAction(formData: FormData): Promise<void> {
+  const user = await requireUser("member");
+  const todoId = field(formData, "todoId");
+  try {
+    await connectToDatabase();
+    const deleted = await PersonalTodo.findOneAndDelete(personalTodoOwnerFilter(user.id, todoId));
+    if (!deleted) throw new Error("المهمة الشخصية غير موجودة.");
+  } catch (error) {
+    await reportMutationError(error, "delete-personal-todo");
+    redirect("/personal-tasks?error=todo-save");
+  }
+  revalidatePath("/personal-tasks");
+  redirect("/personal-tasks?todo=saved");
 }
 
 export async function reviewCompletionAction(formData: FormData): Promise<void> {
@@ -131,24 +290,97 @@ export async function reviewCompletionAction(formData: FormData): Promise<void> 
     await connectToDatabase();
     const occurrence = await DailyTaskOccurrence.findById(toObjectId(parsed.data.occurrenceId));
     if (!occurrence) throw new Error("سجل المهمة غير موجود.");
+    if (effectiveCompletionMode(occurrence.completionModeSnapshot) !== "self") {
+      throw new TaskCompletionPolicyError("طلبات المهام التي تتطلب مراجعة تُعتمد من قسم طلبات المراجعة.");
+    }
     const before = { status: occurrence.status, reviewNote: occurrence.reviewNote };
-    occurrence.status = parsed.data.status;
-    occurrence.reviewNote = parsed.data.reason;
-    occurrence.reviewedAt = new Date();
-    occurrence.reviewedBy = toObjectId(user.id);
-    await occurrence.save();
+    const updated = await DailyTaskOccurrence.findOneAndUpdate(
+      {
+        _id: occurrence._id,
+        status: occurrence.status,
+        $or: [{ completionModeSnapshot: "self" }, { completionModeSnapshot: { $exists: false } }],
+      },
+      {
+        $set: {
+          status: parsed.data.status,
+          reviewNote: parsed.data.reason,
+          reviewedAt: new Date(),
+          reviewedBy: toObjectId(user.id),
+          completedAt: parsed.data.status === "completed" ? new Date() : null,
+        },
+      },
+      { new: true, runValidators: true },
+    );
+    if (!updated) throw new TaskCompletionPolicyError("تم تحديث المهمة في طلب آخر.");
     await writeAudit(user.id, "completion.reviewed", "occurrence", String(occurrence._id), {
       before,
-      after: { status: occurrence.status, reviewNote: occurrence.reviewNote },
+      after: { status: updated.status, reviewNote: updated.reviewNote },
       reason: parsed.data.reason,
     });
     dateKey = occurrence.dateKey;
   } catch (error) {
     await reportMutationError(error, "review-completion");
+    if (error instanceof TaskCompletionPolicyError) redirect("/daily-review?error=review-required");
     redirect("/daily-review?error=save");
   }
   revalidatePath("/daily-review");
   revalidatePath("/my-tasks");
+  redirect(`/daily-review?date=${dateKey}&saved=1`);
+}
+
+export async function reviewTaskSubmissionAction(formData: FormData): Promise<void> {
+  const user = await requireUser("admin");
+  const parsed = z.object({
+    occurrenceId: z.string().min(1),
+    decision: z.enum(["approved", "rejected"]),
+    note: z.string().trim().max(500).optional(),
+  }).safeParse({
+    occurrenceId: field(formData, "occurrenceId"),
+    decision: field(formData, "decision"),
+    note: field(formData, "note"),
+  });
+  if (!parsed.success) redirect("/daily-review?error=invalid");
+
+  let dateKey = "";
+  try {
+    await connectToDatabase();
+    const occurrence = await DailyTaskOccurrence.findById(toObjectId(parsed.data.occurrenceId));
+    if (!occurrence) throw new Error("سجل المهمة غير موجود.");
+    const nextStatus = resolveReviewDecision(
+      user.role,
+      occurrence.completionModeSnapshot,
+      occurrence.status,
+      parsed.data.decision,
+    );
+    const now = new Date();
+    const updated = await DailyTaskOccurrence.findOneAndUpdate(
+      { _id: occurrence._id, status: "needs_review", completionModeSnapshot: "review" },
+      {
+        $set: {
+          status: nextStatus,
+          reviewNote: parsed.data.note ?? "",
+          reviewedAt: now,
+          reviewedBy: toObjectId(user.id),
+          completedAt: nextStatus === "completed" ? now : null,
+        },
+      },
+      { new: true, runValidators: true },
+    );
+    if (!updated) throw new TaskCompletionPolicyError("تمت مراجعة هذا الطلب أو تغييره مسبقاً.");
+    await writeAudit(user.id, `completion.${parsed.data.decision}`, "occurrence", String(updated._id), {
+      before: { status: occurrence.status, memberNote: occurrence.memberNote },
+      after: { status: updated.status, reviewNote: updated.reviewNote },
+      reason: parsed.data.note,
+    });
+    dateKey = updated.dateKey;
+  } catch (error) {
+    await reportMutationError(error, "review-task-submission");
+    redirect(`/daily-review?error=${error instanceof TaskCompletionPolicyError ? "review-required" : "save"}`);
+  }
+  revalidatePath("/daily-review");
+  revalidatePath("/my-tasks");
+  revalidatePath("/dashboard");
+  revalidatePath("/reports");
   redirect(`/daily-review?date=${dateKey}&saved=1`);
 }
 
@@ -170,6 +402,7 @@ export async function createDeductionAction(formData: FormData): Promise<void> {
     const occurrence = await DailyTaskOccurrence.findById(toObjectId(parsed.data.occurrenceId));
     if (!occurrence) throw new Error("سجل المهمة غير موجود.");
     if (occurrence.status === "completed") throw new Error("لا يمكن اقتراح خصم لمهمة مكتملة.");
+    if (occurrence.status === "needs_review") throw new Error("لا يمكن اقتراح خصم أثناء انتظار مراجعة إكمال المهمة.");
     const scheduledBreak = await CourseBreak.exists({
       memberId: occurrence.memberId,
       courseTaskId: occurrence.taskId,
@@ -334,6 +567,46 @@ export async function recordCourseCompletionAction(formData: FormData): Promise<
   redirect(`${path}?saved=1`);
 }
 
+export async function createTaskDefinitionAction(formData: FormData): Promise<void> {
+  const user = await requireUser("admin");
+  const schema = z.object({
+    key: z.string().trim().toLowerCase().min(2).max(120).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+    nameAr: z.string().trim().min(2).max(120),
+    dailyValue: z.coerce.number().int().min(0).max(100000),
+    deductionMultiplier: z.coerce.number().int().min(0).max(100),
+    durationMinutes: z.coerce.number().int().min(0).max(1440),
+    completionMode: z.enum(["self", "review"]),
+    completionCriteria: z.string().trim().min(3).max(500),
+    displayOrder: z.coerce.number().int().min(0).max(10000),
+  });
+  const parsed = schema.safeParse({
+    key: field(formData, "key"),
+    nameAr: field(formData, "nameAr"),
+    dailyValue: field(formData, "dailyValue"),
+    deductionMultiplier: field(formData, "deductionMultiplier"),
+    durationMinutes: field(formData, "durationMinutes"),
+    completionMode: field(formData, "completionMode"),
+    completionCriteria: field(formData, "completionCriteria"),
+    displayOrder: field(formData, "displayOrder"),
+  });
+  if (!parsed.success) redirect("/settings?error=invalid");
+
+  try {
+    await connectToDatabase();
+    const task = await TaskDefinition.create({ ...parsed.data, isActive: true });
+    await writeAudit(user.id, "task.created", "task", String(task._id), {
+      after: parsed.data,
+    });
+  } catch (error) {
+    await reportMutationError(error, "create-task-definition");
+    redirect(`/settings?error=${error instanceof Error && error.message.includes("duplicate") ? "duplicate" : "save"}`);
+  }
+  revalidatePath("/settings");
+  revalidatePath("/dashboard");
+  revalidatePath("/my-tasks");
+  redirect("/settings?saved=1");
+}
+
 export async function updateTaskSettingsAction(formData: FormData): Promise<void> {
   const user = await requireUser("admin");
   const schema = z.object({
@@ -342,6 +615,7 @@ export async function updateTaskSettingsAction(formData: FormData): Promise<void
     dailyValue: z.coerce.number().int().min(0).max(100000),
     deductionMultiplier: z.coerce.number().int().min(0).max(100),
     durationMinutes: z.coerce.number().int().min(0).max(1440),
+    completionMode: z.enum(["self", "review"]),
     completionCriteria: z.string().trim().min(3).max(500),
     isActive: z.enum(["true", "false"]),
   });
@@ -351,6 +625,7 @@ export async function updateTaskSettingsAction(formData: FormData): Promise<void
     dailyValue: field(formData, "dailyValue"),
     deductionMultiplier: field(formData, "deductionMultiplier"),
     durationMinutes: field(formData, "durationMinutes"),
+    completionMode: field(formData, "completionMode"),
     completionCriteria: field(formData, "completionCriteria"),
     isActive: field(formData, "isActive"),
   });
@@ -364,6 +639,7 @@ export async function updateTaskSettingsAction(formData: FormData): Promise<void
       dailyValue: task.dailyValue,
       deductionMultiplier: task.deductionMultiplier,
       durationMinutes: task.durationMinutes,
+      completionMode: task.completionMode,
       completionCriteria: task.completionCriteria,
       isActive: task.isActive,
     };
@@ -371,6 +647,7 @@ export async function updateTaskSettingsAction(formData: FormData): Promise<void
     task.dailyValue = parsed.data.dailyValue;
     task.deductionMultiplier = parsed.data.deductionMultiplier;
     task.durationMinutes = parsed.data.durationMinutes;
+    task.completionMode = parsed.data.completionMode;
     task.completionCriteria = parsed.data.completionCriteria;
     task.isActive = parsed.data.isActive === "true";
     await task.save();
@@ -381,6 +658,7 @@ export async function updateTaskSettingsAction(formData: FormData): Promise<void
         dailyValue: task.dailyValue,
         deductionMultiplier: task.deductionMultiplier,
         durationMinutes: task.durationMinutes,
+        completionMode: task.completionMode,
         completionCriteria: task.completionCriteria,
         isActive: task.isActive,
       },

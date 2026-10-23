@@ -16,12 +16,14 @@ export function taskOccurrenceSnapshot(task: {
   nameAr: string;
   dailyValue: number;
   deductionMultiplier: number;
-}): { taskKeySnapshot: string; taskNameSnapshot: string; taskValueSnapshot: number; deductionMultiplierSnapshot: number } {
+  completionMode?: "self" | "review";
+}): { taskKeySnapshot: string; taskNameSnapshot: string; taskValueSnapshot: number; deductionMultiplierSnapshot: number; completionModeSnapshot: "self" | "review" } {
   return {
     taskKeySnapshot: task.key,
     taskNameSnapshot: task.nameAr,
     taskValueSnapshot: task.dailyValue,
     deductionMultiplierSnapshot: task.deductionMultiplier,
+    completionModeSnapshot: task.completionMode ?? "self",
   };
 }
 

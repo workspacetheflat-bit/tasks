@@ -76,6 +76,7 @@ describe("task and course-break rules", () => {
       taskNameSnapshot: "مهمة",
       taskValueSnapshot: 40,
       deductionMultiplierSnapshot: 2,
+      completionModeSnapshot: "self",
     });
   });
 

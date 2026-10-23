@@ -5,7 +5,12 @@ import { dateKeyInZone, formatDateArabic, isValidDateKey } from "@/lib/date";
 import { connectToDatabase } from "@/lib/db";
 import { CourseCompletion, Deduction } from "@/models";
 import { ensureDailyOccurrences, getBreaks } from "@/server/queries";
-import { recordCourseCompletionAction, updateCompletionAction } from "@/server/actions";
+import { effectiveCompletionMode } from "@/lib/task-completion";
+import {
+  recordCourseCompletionAction,
+  submitTaskReviewAction,
+  updateCompletionAction,
+} from "@/server/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -34,20 +39,26 @@ export default async function MemberTasksPage({ searchParams }: { searchParams: 
       <section className="task-list">
         {occurrences.map((item) => {
           const exempt = breakTaskKeys.has(item.taskKeySnapshot);
+          const completionMode = effectiveCompletionMode(item.completionModeSnapshot);
           return <article className={`task-card ${item.status === "completed" ? "task-done" : ""}`} key={String(item._id)}>
             <div className="task-card-main">
               <div className="task-title-row"><h2>{item.taskNameSnapshot}</h2>{exempt ? <StatusBadge status="scheduled" /> : <StatusBadge status={item.status} />}</div>
-              <p className="task-criteria">{exempt ? breaks.find((entry) => (entry.courseTaskId as unknown as { key: string }).key === item.taskKeySnapshot)?.reason : item.memberNote || "أنجزي المهمة حسب معيارها اليومي."}</p>
+              <p className="task-criteria">{exempt ? breaks.find((entry) => (entry.courseTaskId as unknown as { key: string }).key === item.taskKeySnapshot)?.reason : item.reviewNote && item.status === "incomplete" ? `ملاحظة المراجعة: ${item.reviewNote}` : item.memberNote || "أنجزي المهمة حسب معيارها اليومي."}</p>
               <div className="task-meta"><span><Money amount={item.taskValueSnapshot} /></span><span>{exempt ? "معفاة لهذا اليوم فقط" : "قيمة المهمة اليومية"}</span></div>
             </div>
-            {!exempt && <form action={updateCompletionAction} className="task-action-form">
+            {!exempt && completionMode === "self" && <form action={updateCompletionAction} className="task-action-form">
               <input name="occurrenceId" type="hidden" value={String(item._id)} />
               <label className="note-label">ملاحظة (اختياري)<input name="note" maxLength={500} defaultValue={item.memberNote} placeholder="أضيفي ملاحظة" /></label>
               <button className={`button ${item.status === "completed" ? "button-secondary" : "button-primary"}`} name="status" type="submit" value={item.status === "completed" ? "incomplete" : "completed"}>
                 {item.status === "completed" ? "إلغاء الإكمال" : "تمت المهمة"}
               </button>
-              {item.status !== "completed" && <button className="text-button" name="status" type="submit" value="needs_review">إرسال للمراجعة</button>}
             </form>}
+            {!exempt && completionMode === "review" && item.status === "incomplete" && <form action={submitTaskReviewAction} className="task-action-form">
+              <input name="occurrenceId" type="hidden" value={String(item._id)} />
+              <label className="note-label">ملاحظة للمسؤول (اختياري)<input name="note" maxLength={500} defaultValue={item.memberNote} placeholder="أضيفي تفاصيل الإتمام" /></label>
+              <button className="button button-primary" type="submit">طلب مراجعة</button>
+            </form>}
+            {!exempt && completionMode === "review" && item.status === "needs_review" && <p className="muted">تم إرسال المهمة، وهي بانتظار مراجعة المسؤول.</p>}
           </article>;
         })}
         {occurrences.length === 0 && <EmptyState>لا توجد مهام نشطة لهذا اليوم.</EmptyState>}
