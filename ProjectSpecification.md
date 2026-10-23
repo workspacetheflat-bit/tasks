@@ -39,7 +39,8 @@ Daily task values:
 | Task | Daily value | Deduction if missed |
 |---|---:|---:|
 | Surah Al-Baqarah | 50 EGP | 100 EGP |
-| Morning and evening adhkar | 30 EGP | 60 EGP |
+| Morning adhkar | 15 EGP | 30 EGP |
+| Evening adhkar | 15 EGP | 30 EGP |
 | Nutrition book writing | 40 EGP | 80 EGP |
 | Nutrition or beauty course | 40 EGP | 80 EGP |
 | Quran course | 40 EGP | 80 EGP |
@@ -80,16 +81,17 @@ Do not use floating-point arithmetic for money. Store EGP amounts as integers.
 
 ## 4. Daily Tasks
 
-Seed these eight active daily tasks:
+Seed these nine active daily tasks:
 
 1. Surah Al-Baqarah — 50 EGP — expected duration: 60 minutes.
-2. Morning and evening adhkar — 30 EGP — expected duration: 30 minutes total.
-3. Nutrition book writing — 40 EGP — expected duration: 60 minutes.
-4. Nutrition or beauty course — 40 EGP — expected duration: 60 minutes.
-5. Quran course — 40 EGP — expected duration: 60 minutes.
-6. Nutrition page post #1 — 22 EGP — one completed, publish-ready or scheduled post.
-7. Nutrition page post #2 — 22 EGP — one completed, publish-ready or scheduled post.
-8. Scrolling-limit compliance — 40 EGP — maximum one hour of scrolling per day.
+2. Morning adhkar — 15 EGP — expected duration: 15 minutes.
+3. Evening adhkar — 15 EGP — expected duration: 15 minutes.
+4. Nutrition book writing — 40 EGP — expected duration: 60 minutes.
+5. Nutrition or beauty course — 40 EGP — expected duration: 60 minutes.
+6. Quran course — 40 EGP — expected duration: 60 minutes.
+7. Nutrition page post #1 — 22 EGP — one completed, publish-ready or scheduled post.
+8. Nutrition page post #2 — 22 EGP — one completed, publish-ready or scheduled post.
+9. Scrolling-limit compliance — 40 EGP — maximum one hour of scrolling per day.
 
 For each task, store:
 - Name in Arabic.
@@ -173,7 +175,7 @@ Display:
 
 ### C. Daily Task Review — Admin
 - Select a date using a date picker.
-- Display all eight tasks and their configured values.
+- Display all nine tasks and their configured values.
 - Show the member's submitted completion status.
 - Allow the Admin to correct completion status with a reason.
 - Identify tasks that were required on that date.

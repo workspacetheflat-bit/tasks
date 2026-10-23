@@ -11,7 +11,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const user = await requireUser("admin");
   const params = await searchParams;
   await connectToDatabase();
-  const tasks = await TaskDefinition.find().sort({ displayOrder: 1 }).lean();
+  const tasks = await TaskDefinition.find().sort({ displayOrder: 1, key: -1 }).lean();
   return (
     <AppShell user={user}>
       <PageHeading eyebrow="إدارة المهام" title="إعدادات المهام" description="التعديلات تسري على السجلات الجديدة فقط؛ القيم المحفوظة تاريخياً لا تتغير." />

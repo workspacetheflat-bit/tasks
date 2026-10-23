@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "seed:tasks": "tsx scripts/seed-tasks.ts",
-    "setup:users": "tsx scripts/setup-users.ts"
+    "setup:users": "tsx scripts/setup-users.ts",
+    "migrate:adhkar": "tsx scripts/migrate-adhkar.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

@@ -2,6 +2,8 @@ import "server-only";
 import { connectToDatabase } from "@/lib/db";
 import { TaskDefinition, DailyTaskOccurrence, User, CourseBreak } from "@/models";
 import { taskOccurrenceSnapshot } from "@/lib/finance";
+import { TASK_KEYS } from "@/lib/config";
+import { dateKeyInZone } from "@/lib/date";
 
 export async function findMemberId(): Promise<string | null> {
   await connectToDatabase();
@@ -11,10 +13,17 @@ export async function findMemberId(): Promise<string | null> {
 
 export async function ensureDailyOccurrences(memberId: string, dateKey: string) {
   await connectToDatabase();
-  const tasks = await TaskDefinition.find({ isActive: true }).sort({ displayOrder: 1 }).lean();
+  const tasks = await TaskDefinition.find({ isActive: true })
+    .sort({ displayOrder: 1, key: -1 })
+    .lean();
   if (!tasks.length) return { tasks, occurrences: [] };
+  const morningTask = tasks.find((task) => task.key === TASK_KEYS.morningAdhkar);
+  const adhkarEffectiveDate = morningTask ? dateKeyInZone(morningTask.createdAt) : dateKey;
+  const tasksForDate = tasks.filter((task) => {
+    return (task.key !== TASK_KEYS.morningAdhkar && task.key !== TASK_KEYS.eveningAdhkar) || dateKey >= adhkarEffectiveDate;
+  });
   await DailyTaskOccurrence.bulkWrite(
-    tasks.map((task) => ({
+    tasksForDate.map((task) => ({
       updateOne: {
         filter: { memberId, taskId: task._id, dateKey },
         update: {
