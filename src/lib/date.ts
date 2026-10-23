@@ -21,6 +21,15 @@ export function isValidDateKey(value: string): boolean {
   return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
 }
 
+export function shiftDateKey(dateKey: string, days: number): string {
+  if (!isValidDateKey(dateKey) || !Number.isSafeInteger(days)) {
+    throw new Error("التاريخ أو مقدار التغيير غير صالح.");
+  }
+  const date = new Date(`${dateKey}T12:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 export function isValidMonth(value: string): boolean {
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
 }

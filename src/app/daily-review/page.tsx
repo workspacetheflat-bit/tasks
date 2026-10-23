@@ -7,6 +7,7 @@ import { CourseBreak, DailyTaskOccurrence, Deduction, User } from "@/models";
 import { createDeductionAction, recordCourseCompletionAction, reviewCompletionAction, reviewTaskSubmissionAction } from "@/server/actions";
 import { ensureDailyOccurrences, getCurrentTaskCompletionModes } from "@/server/queries";
 import { isPendingReviewRequest } from "@/lib/task-completion";
+import { CelebrationActionForm, TaskCelebrationProvider } from "@/components/personal-todo-celebration";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,7 @@ export default async function DailyReviewPage({ searchParams }: { searchParams: 
 
   return (
     <AppShell user={user}>
+      <TaskCelebrationProvider>
       <PageHeading eyebrow="إدارة اليوم" title="مراجعة المهام" description="راجع حالة العضو، وسجّل سبباً قبل اقتراح أي خصم." />
       <Notice code={params.error || params.saved} />
       {!member && <div className="notice error">لا يوجد حساب عضو نشط. أنشئ الحساب الأولي قبل مراجعة المهام.</div>}
@@ -63,14 +65,16 @@ export default async function DailyReviewPage({ searchParams }: { searchParams: 
               <StatusBadge status={item.status} />
             </div>
             <p>{item.memberNote || "لم يضف العضو ملاحظة."}</p>
-            <form action={reviewTaskSubmissionAction} className="review-form">
-              <input name="occurrenceId" type="hidden" value={String(item._id)} />
-              <label className="full-span">ملاحظة المراجعة (اختياري)<textarea name="note" maxLength={500} rows={2} defaultValue={item.reviewNote} /></label>
-              <div className="review-decision-actions">
-                <button className="button button-primary" name="decision" type="submit" value="approved">موافقة</button>
-                <button className="button button-danger" name="decision" type="submit" value="rejected">رفض</button>
-              </div>
-            </form>
+            <CelebrationActionForm action={reviewTaskSubmissionAction} className="review-form">
+              <>
+                <input name="occurrenceId" type="hidden" value={String(item._id)} />
+                <label className="full-span">ملاحظة المراجعة (اختياري)<textarea name="note" maxLength={500} rows={2} defaultValue={item.reviewNote} /></label>
+                <div className="review-decision-actions">
+                  <button className="button button-primary" name="decision" type="submit" value="approved">موافقة</button>
+                  <button className="button button-danger" name="decision" type="submit" value="rejected">رفض</button>
+                </div>
+              </>
+            </CelebrationActionForm>
           </article>)}
         </div>
       </section>
@@ -118,6 +122,7 @@ export default async function DailyReviewPage({ searchParams }: { searchParams: 
           <button className="button button-primary" type="submit">حفظ إتمام الدورة</button>
         </form>
       </section>
+      </TaskCelebrationProvider>
     </AppShell>
   );
 }

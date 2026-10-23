@@ -96,7 +96,7 @@ describe("scrolling completion server-action enforcement", () => {
     findOccurrenceMock.mockResolvedValue(scrollingOccurrence(snapshot));
 
     await expect(updateCompletionAction(formData()))
-      .rejects.toThrow("REDIRECT:/my-tasks?error=review-required");
+      .resolves.toMatchObject({ ok: false, completed: false, changed: false, error: "review-required" });
 
     expect(updateOccurrenceMock).not.toHaveBeenCalled();
     expect(createAuditMock).not.toHaveBeenCalled();
@@ -117,7 +117,7 @@ describe("scrolling completion server-action enforcement", () => {
     });
 
     await expect(updateCompletionAction(formData()))
-      .rejects.toThrow("REDIRECT:/my-tasks?date=2026-10-23&saved=1");
+      .resolves.toEqual({ ok: true, completed: true, changed: true });
 
     expect(updateOccurrenceMock).toHaveBeenCalledOnce();
     expect(createAuditMock).toHaveBeenCalledOnce();
@@ -132,7 +132,7 @@ describe("scrolling completion server-action enforcement", () => {
     });
 
     await expect(updateCompletionAction(formData()))
-      .rejects.toThrow("REDIRECT:/my-tasks?error=review-required");
+      .resolves.toMatchObject({ ok: false, completed: false, changed: false, error: "review-required" });
     expect(updateOccurrenceMock).not.toHaveBeenCalled();
   });
 
@@ -153,7 +153,7 @@ describe("scrolling completion server-action enforcement", () => {
     });
 
     await expect(reviewTaskSubmissionAction(reviewFormData()))
-      .rejects.toThrow("REDIRECT:/daily-review?date=2026-10-23&saved=1");
+      .resolves.toEqual({ ok: true, completed: true, changed: true });
 
     expect(updateOccurrenceMock).toHaveBeenCalledOnce();
     expect(updateOccurrenceMock.mock.calls[0][0]).toMatchObject({ status: "needs_review" });
@@ -161,5 +161,51 @@ describe("scrolling completion server-action enforcement", () => {
       status: "completed",
       reviewedBy: "64b000000000000000000002",
     });
+  });
+
+  it("does not report a completion when a direct daily-task update fails", async () => {
+    findOccurrenceMock.mockResolvedValue(scrollingOccurrence("self"));
+    findTaskMock.mockReturnValue({
+      select: () => ({ lean: () => Promise.resolve({ completionMode: "self" }) }),
+    });
+    updateOccurrenceMock.mockResolvedValue(null);
+
+    await expect(updateCompletionAction(formData()))
+      .resolves.toMatchObject({ ok: false, completed: false, changed: false });
+  });
+
+  it("does not report completion from a review request submission", async () => {
+    const { submitTaskReviewAction } = await import("../src/server/actions");
+    const submission = new FormData();
+    submission.set("occurrenceId", occurrenceId);
+    findOccurrenceMock.mockResolvedValue(scrollingOccurrence("review"));
+    updateOccurrenceMock.mockResolvedValue({
+      _id: occurrenceId,
+      status: "needs_review",
+      dateKey: "2026-10-23",
+      memberNote: "",
+    });
+
+    await expect(submitTaskReviewAction(submission))
+      .rejects.toThrow("REDIRECT:/my-tasks?date=2026-10-23&saved=1");
+    expect(updateOccurrenceMock.mock.calls[0][1].$set.status).toBe("needs_review");
+  });
+
+  it("reports an admin rejection as not completed", async () => {
+    requireUserMock.mockResolvedValue({ id: "64b000000000000000000002", role: "admin" });
+    const rejection = reviewFormData();
+    rejection.set("decision", "rejected");
+    findOccurrenceMock.mockResolvedValue({
+      ...scrollingOccurrence("review"),
+      status: "needs_review",
+    });
+    updateOccurrenceMock.mockResolvedValue({
+      _id: occurrenceId,
+      status: "incomplete",
+      dateKey: "2026-10-23",
+    });
+
+    await expect(reviewTaskSubmissionAction(rejection))
+      .resolves.toEqual({ ok: true, completed: false, changed: true });
   });
 });

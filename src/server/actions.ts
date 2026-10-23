@@ -7,13 +7,13 @@ import { z } from "zod";
 import { createSession, destroySession, requireUser } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/db";
 import { calculateDeduction } from "@/lib/finance";
-import { isValidDateKey } from "@/lib/date";
+import { dateKeyInZone, isValidDateKey } from "@/lib/date";
 import { AuditEvent, CourseBreak, CourseCompletion, DailyTaskOccurrence, Deduction, PersonalTodo, TaskDefinition, User, toObjectId } from "@/models";
 import {
   createPersonalTodoRecord,
   personalTodoInputSchema,
   personalTodoOwnerFilter,
-  togglePersonalTodo,
+  personalTodoUpdateInputSchema,
   updatePersonalTodoFields,
 } from "@/lib/personal-todos";
 import {
@@ -37,6 +37,11 @@ function field(formData: FormData, name: string): string {
 
 async function reportMutationError(error: unknown, action: string): Promise<void> {
   console.error(`[${action}]`, error);
+}
+
+function personalTodoRedirect(returnDate: string, result: string): string {
+  const date = isValidDateKey(returnDate) ? returnDate : dateKeyInZone();
+  return `/personal-tasks?date=${date}&${result}`;
 }
 
 async function writeAudit(
@@ -94,7 +99,12 @@ export async function logoutAction(): Promise<void> {
   redirect("/login");
 }
 
-export async function updateCompletionAction(formData: FormData): Promise<void> {
+export async function updateCompletionAction(formData: FormData): Promise<{
+  ok: boolean;
+  completed: boolean;
+  changed: boolean;
+  error?: string;
+}> {
   const user = await requireUser("member");
   const schema = z.object({
     occurrenceId: z.string().min(1),
@@ -106,9 +116,8 @@ export async function updateCompletionAction(formData: FormData): Promise<void> 
     status: field(formData, "status"),
     note: field(formData, "note"),
   });
-  if (!parsed.success) redirect("/my-tasks?error=invalid");
+  if (!parsed.success) return { ok: false, completed: false, changed: false, error: "invalid" };
 
-  let dateKey = "";
   try {
     await connectToDatabase();
     const occurrence = await DailyTaskOccurrence.findOne({
@@ -121,6 +130,9 @@ export async function updateCompletionAction(formData: FormData): Promise<void> 
       ? occurrence.completionModeSnapshot
       : currentMode;
     assertMemberCanCompleteDirectly(completionMode);
+    if (occurrence.status === parsed.data.status) {
+      return { ok: true, completed: occurrence.status === "completed", changed: false };
+    }
     const before = { status: occurrence.status, memberNote: occurrence.memberNote };
     const updated = await DailyTaskOccurrence.findOneAndUpdate(
       {
@@ -137,19 +149,22 @@ export async function updateCompletionAction(formData: FormData): Promise<void> 
       },
       { new: true, runValidators: true },
     );
-    if (!updated) throw new TaskCompletionPolicyError("تم تحديث المهمة في طلب آخر؛ أعد تحميل الصفحة.");
+    if (!updated) return { ok: false, completed: false, changed: false, error: "conflict" };
     await writeAudit(user.id, "completion.updated", "occurrence", String(occurrence._id), {
       before,
       after: { status: updated.status, memberNote: updated.memberNote },
     });
-    dateKey = occurrence.dateKey;
+    revalidatePath("/my-tasks");
+    return { ok: true, completed: updated.status === "completed", changed: true };
   } catch (error) {
     await reportMutationError(error, "update-completion");
-    if (error instanceof TaskCompletionPolicyError) redirect("/my-tasks?error=review-required");
-    redirect("/my-tasks?error=save");
+    return {
+      ok: false,
+      completed: false,
+      changed: false,
+      error: error instanceof TaskCompletionPolicyError ? "review-required" : "save",
+    };
   }
-  revalidatePath("/my-tasks");
-  redirect(`/my-tasks?date=${dateKey}&saved=1`);
 }
 
 export async function submitTaskReviewAction(formData: FormData): Promise<void> {
@@ -208,33 +223,35 @@ export async function submitTaskReviewAction(formData: FormData): Promise<void> 
 
 export async function createPersonalTodoAction(formData: FormData): Promise<void> {
   const user = await requireUser("member");
+  const returnDate = field(formData, "returnDate");
   const parsed = personalTodoInputSchema.safeParse({
     title: field(formData, "title"),
     description: field(formData, "description"),
     dueDate: field(formData, "dueDate"),
   });
-  if (!parsed.success) redirect("/personal-tasks?error=todo-invalid");
+  if (!parsed.success) redirect(personalTodoRedirect(returnDate, "error=todo-invalid"));
 
   try {
     await connectToDatabase();
     await PersonalTodo.create(createPersonalTodoRecord(user.id, parsed.data));
   } catch (error) {
     await reportMutationError(error, "create-personal-todo");
-    redirect("/personal-tasks?error=todo-save");
+    redirect(personalTodoRedirect(returnDate, "error=todo-save"));
   }
   revalidatePath("/personal-tasks");
-  redirect("/personal-tasks?todo=saved");
+  redirect(personalTodoRedirect(returnDate, "todo=saved"));
 }
 
 export async function updatePersonalTodoAction(formData: FormData): Promise<void> {
   const user = await requireUser("member");
   const todoId = field(formData, "todoId");
-  const parsed = personalTodoInputSchema.safeParse({
+  const returnDate = field(formData, "returnDate");
+  const parsed = personalTodoUpdateInputSchema.safeParse({
     title: field(formData, "title"),
     description: field(formData, "description"),
     dueDate: field(formData, "dueDate"),
   });
-  if (!parsed.success) redirect("/personal-tasks?error=todo-invalid");
+  if (!parsed.success) redirect(personalTodoRedirect(returnDate, "error=todo-invalid"));
 
   try {
     await connectToDatabase();
@@ -244,42 +261,57 @@ export async function updatePersonalTodoAction(formData: FormData): Promise<void
     await todo.save();
   } catch (error) {
     await reportMutationError(error, "update-personal-todo");
-    redirect("/personal-tasks?error=todo-save");
+    redirect(personalTodoRedirect(returnDate, "error=todo-save"));
   }
   revalidatePath("/personal-tasks");
-  redirect("/personal-tasks?todo=saved");
+  redirect(personalTodoRedirect(returnDate, "todo=saved"));
 }
 
-export async function togglePersonalTodoAction(formData: FormData): Promise<void> {
+export async function togglePersonalTodoAction(formData: FormData): Promise<{
+  ok: boolean;
+  completed: boolean;
+  changed: boolean;
+  error?: string;
+}> {
   const user = await requireUser("member");
   const todoId = field(formData, "todoId");
+  const intent = field(formData, "intent");
+  if (intent !== "complete" && intent !== "reopen") {
+    return { ok: false, completed: false, changed: false, error: "todo-invalid" };
+  }
+  const completed = intent === "complete";
   try {
     await connectToDatabase();
-    const todo = await PersonalTodo.findOne(personalTodoOwnerFilter(user.id, todoId));
-    if (!todo) throw new Error("المهمة الشخصية غير موجودة.");
-    togglePersonalTodo(todo);
-    await todo.save();
+    const updatedFrom = await PersonalTodo.findOneAndUpdate(
+      { ...personalTodoOwnerFilter(user.id, todoId), isCompleted: !completed },
+      { $set: { isCompleted: completed } },
+      { new: false, runValidators: true },
+    );
+    if (updatedFrom) revalidatePath("/personal-tasks");
+    else if (!await PersonalTodo.exists(personalTodoOwnerFilter(user.id, todoId))) {
+      return { ok: false, completed: false, changed: false, error: "todo-save" };
+    }
+    return { ok: true, completed, changed: Boolean(updatedFrom) };
   } catch (error) {
     await reportMutationError(error, "toggle-personal-todo");
-    redirect("/personal-tasks?error=todo-save");
+    return { ok: false, completed: false, changed: false, error: "todo-save" };
   }
-  revalidatePath("/personal-tasks");
-  redirect("/personal-tasks?todo=saved");
 }
 
 export async function deletePersonalTodoAction(formData: FormData): Promise<void> {
   const user = await requireUser("member");
   const todoId = field(formData, "todoId");
+  const returnDate = field(formData, "returnDate");
   try {
     await connectToDatabase();
     const deleted = await PersonalTodo.findOneAndDelete(personalTodoOwnerFilter(user.id, todoId));
     if (!deleted) throw new Error("المهمة الشخصية غير موجودة.");
   } catch (error) {
     await reportMutationError(error, "delete-personal-todo");
-    redirect("/personal-tasks?error=todo-save");
+    redirect(personalTodoRedirect(returnDate, "error=todo-save"));
   }
   revalidatePath("/personal-tasks");
-  redirect("/personal-tasks?todo=saved");
+  redirect(personalTodoRedirect(returnDate, "todo=saved"));
 }
 
 export async function reviewCompletionAction(formData: FormData): Promise<void> {
@@ -339,7 +371,12 @@ export async function reviewCompletionAction(formData: FormData): Promise<void> 
   redirect(`/daily-review?date=${dateKey}&saved=1`);
 }
 
-export async function reviewTaskSubmissionAction(formData: FormData): Promise<void> {
+export async function reviewTaskSubmissionAction(formData: FormData): Promise<{
+  ok: boolean;
+  completed: boolean;
+  changed: boolean;
+  error?: string;
+}> {
   const user = await requireUser("admin");
   const parsed = z.object({
     occurrenceId: z.string().min(1),
@@ -350,9 +387,8 @@ export async function reviewTaskSubmissionAction(formData: FormData): Promise<vo
     decision: field(formData, "decision"),
     note: field(formData, "note"),
   });
-  if (!parsed.success) redirect("/daily-review?error=invalid");
+  if (!parsed.success) return { ok: false, completed: false, changed: false, error: "invalid" };
 
-  let dateKey = "";
   try {
     await connectToDatabase();
     const occurrence = await DailyTaskOccurrence.findById(toObjectId(parsed.data.occurrenceId));
@@ -381,22 +417,26 @@ export async function reviewTaskSubmissionAction(formData: FormData): Promise<vo
       },
       { new: true, runValidators: true },
     );
-    if (!updated) throw new TaskCompletionPolicyError("تمت مراجعة هذا الطلب أو تغييره مسبقاً.");
+    if (!updated) return { ok: false, completed: false, changed: false, error: "conflict" };
     await writeAudit(user.id, `completion.${parsed.data.decision}`, "occurrence", String(updated._id), {
       before: { status: occurrence.status, memberNote: occurrence.memberNote },
       after: { status: updated.status, reviewNote: updated.reviewNote },
       reason: parsed.data.note,
     });
-    dateKey = updated.dateKey;
+    revalidatePath("/daily-review");
+    revalidatePath("/my-tasks");
+    revalidatePath("/dashboard");
+    revalidatePath("/reports");
+    return { ok: true, completed: updated.status === "completed", changed: true };
   } catch (error) {
     await reportMutationError(error, "review-task-submission");
-    redirect(`/daily-review?error=${error instanceof TaskCompletionPolicyError ? "review-required" : "save"}`);
+    return {
+      ok: false,
+      completed: false,
+      changed: false,
+      error: error instanceof TaskCompletionPolicyError ? "review-required" : "save",
+    };
   }
-  revalidatePath("/daily-review");
-  revalidatePath("/my-tasks");
-  revalidatePath("/dashboard");
-  revalidatePath("/reports");
-  redirect(`/daily-review?date=${dateKey}&saved=1`);
 }
 
 export async function createDeductionAction(formData: FormData): Promise<void> {

@@ -6,6 +6,7 @@ import { connectToDatabase } from "@/lib/db";
 import { CourseCompletion, Deduction } from "@/models";
 import { ensureDailyOccurrences, getBreaks, getCurrentTaskCompletionModes } from "@/server/queries";
 import { occurrenceCompletionMode } from "@/lib/task-completion";
+import { CelebrationActionForm, TaskCelebrationProvider } from "@/components/personal-todo-celebration";
 import {
   recordCourseCompletionAction,
   submitTaskReviewAction,
@@ -30,6 +31,7 @@ export default async function MemberTasksPage({ searchParams }: { searchParams: 
 
   return (
     <AppShell user={user}>
+      <TaskCelebrationProvider>
       <PageHeading eyebrow="مساحتي اليومية" title="مهامي اليومية" description={formatDateArabic(dateKey)} />
       <Notice code={params.error || params.saved} />
       <section className="toolbar-card">
@@ -55,13 +57,16 @@ export default async function MemberTasksPage({ searchParams }: { searchParams: 
               <p className="task-criteria">{exempt ? breaks.find((entry) => (entry.courseTaskId as unknown as { key: string }).key === item.taskKeySnapshot)?.reason : item.reviewNote && item.status === "incomplete" ? `ملاحظة المراجعة: ${item.reviewNote}` : item.memberNote || "أنجزي المهمة حسب معيارها اليومي."}</p>
               <div className="task-meta"><span><Money amount={item.taskValueSnapshot} /></span><span>{exempt ? "معفاة لهذا اليوم فقط" : "قيمة المهمة اليومية"}</span></div>
             </div>
-            {!exempt && completionMode === "self" && <form action={updateCompletionAction} className="task-action-form">
-              <input name="occurrenceId" type="hidden" value={String(item._id)} />
-              <label className="note-label">ملاحظة (اختياري)<input name="note" maxLength={500} defaultValue={item.memberNote} placeholder="أضيفي ملاحظة" /></label>
-              <button className={`button ${item.status === "completed" ? "button-secondary" : "button-primary"}`} name="status" type="submit" value={item.status === "completed" ? "incomplete" : "completed"}>
-                {item.status === "completed" ? "إلغاء الإكمال" : "تمت المهمة"}
-              </button>
-            </form>}
+            {!exempt && completionMode === "self" && <CelebrationActionForm action={updateCompletionAction} className="task-action-form">
+              <>
+                <input name="occurrenceId" type="hidden" value={String(item._id)} />
+                <input name="status" type="hidden" value={item.status === "completed" ? "incomplete" : "completed"} />
+                <label className="note-label">ملاحظة (اختياري)<input name="note" maxLength={500} defaultValue={item.memberNote} placeholder="أضيفي ملاحظة" /></label>
+                <button className={`button ${item.status === "completed" ? "button-secondary" : "button-primary"}`} type="submit">
+                  {item.status === "completed" ? "إلغاء الإكمال" : "تمت المهمة"}
+                </button>
+              </>
+            </CelebrationActionForm>}
             {!exempt && requiresReview && item.status === "incomplete" && <form action={submitTaskReviewAction} className="task-action-form">
               <input name="occurrenceId" type="hidden" value={String(item._id)} />
               <label className="note-label">ملاحظة للمسؤول (اختياري)<input name="note" maxLength={500} defaultValue={item.memberNote} placeholder="أضيفي تفاصيل الإتمام" /></label>
@@ -96,6 +101,7 @@ export default async function MemberTasksPage({ searchParams }: { searchParams: 
           {completions.map((item) => <div className="list-row" key={String(item._id)}><div><strong>{item.courseName}</strong><small>{(item.courseTaskId as unknown as { nameAr: string }).nameAr} · {formatDateArabic(item.completionDate)}</small></div></div>)}
         </article>
       </section>
+      </TaskCelebrationProvider>
     </AppShell>
   );
 }
