@@ -32,13 +32,16 @@ export default async function MemberTasksPage({ searchParams }: { searchParams: 
   return (
     <AppShell user={user}>
       <TaskCelebrationProvider>
-      <PageHeading eyebrow="مساحتي اليومية" title="مهامي اليومية" description={formatDateArabic(dateKey)} />
+      <PageHeading eyebrow="مساحتي اليومية" title="مهامي اليومية" description={`خطوة بخطوة نحو يوم منجز · ${formatDateArabic(dateKey)}`} />
       <Notice code={params.error || params.saved} />
       <section className="toolbar-card">
         <div><span className="eyebrow">إنجاز اليوم</span><strong>{completeCount} من {required.length} مهام مكتملة</strong></div>
         <form action="/my-tasks" className="inline-form"><label htmlFor="date">اختر يوماً</label><input id="date" name="date" type="date" defaultValue={dateKey} /><button className="button button-secondary" type="submit">عرض</button></form>
       </section>
-      <div className="progress-track" aria-label={`إنجاز ${completeCount} من ${required.length}`}><span style={{ width: `${required.length ? Math.round(completeCount / required.length * 100) : 0}%` }} /></div>
+      <div className="daily-task-progress" role="progressbar" aria-label={`إنجاز ${completeCount} من ${required.length}`} aria-valuenow={completeCount} aria-valuemin={0} aria-valuemax={required.length || 1}>
+        <span className="daily-task-progress-copy"><strong>{completeCount}<span> / {required.length}</span></strong><small>مهمة أُنجزت اليوم</small></span>
+        <span className="progress-track"><span style={{ width: `${required.length ? Math.round(completeCount / required.length * 100) : 0}%` }} /></span>
+      </div>
       <section className="task-list">
         {occurrences.map((item) => {
           const exempt = breakTaskKeys.has(item.taskKeySnapshot);

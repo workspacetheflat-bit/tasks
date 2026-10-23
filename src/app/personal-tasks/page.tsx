@@ -116,9 +116,9 @@ export default async function PersonalTasksPage({
         <div className="personal-todo-hero">
           <div className="personal-todo-hero-copy">
             <span className="personal-todo-hero-icon"><Sparkles aria-hidden="true" size={20} /></span>
-            <p className="eyebrow">خطة اليوم</p>
+            <p className="eyebrow">مساحة يومية لك</p>
             <h2>أهلاً {user.displayName}، يومك مليء بالإنجاز</h2>
-            <p className="personal-todo-selected-date">{formatDateArabic(selectedDate)}</p>
+            <p className="personal-todo-selected-date"><CalendarDays aria-hidden="true" size={15} />{formatDateArabic(selectedDate)}</p>
             <p>تابع مهام هذا اليوم فقط. هذه القائمة لك وحدك ولا تؤثر على مهامك اليومية المطلوبة.</p>
           </div>
           <div className="personal-todo-progress-card">
@@ -149,7 +149,7 @@ export default async function PersonalTasksPage({
         <Link className="button button-quiet button-small" href="/personal-tasks">اليوم</Link>
       </section>
 
-      <section className="personal-todo-create-panel">
+      <section className="personal-todo-create-panel" id="quick-add">
         <div className="personal-todo-create-heading">
           <span className="personal-todo-add-icon"><Plus aria-hidden="true" size={20} /></span>
           <div><p className="eyebrow">فكرة جديدة؟</p><h2>أضف مهمة إلى قائمتك</h2></div>
