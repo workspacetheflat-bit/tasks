@@ -4,11 +4,26 @@ import { TaskDefinition, DailyTaskOccurrence, User, CourseBreak } from "@/models
 import { taskOccurrenceSnapshot } from "@/lib/finance";
 import { TASK_KEYS } from "@/lib/config";
 import { dateKeyInZone } from "@/lib/date";
+import { currentTaskCompletionMode, type CompletionMode } from "@/lib/task-completion";
 
 export async function findMemberId(): Promise<string | null> {
   await connectToDatabase();
   const member = await User.findOne({ role: "member", isActive: true }).select("_id").lean();
   return member ? String(member._id) : null;
+}
+
+export async function getCurrentTaskCompletionModes(taskIds: unknown[]): Promise<Map<string, CompletionMode | null>> {
+  const uniqueIds = [...new Set(taskIds.map(String))];
+  if (!uniqueIds.length) return new Map();
+  const definitions = await TaskDefinition.find({ _id: { $in: uniqueIds } })
+    .select("_id completionMode")
+    .lean();
+  return new Map(
+    definitions.map((task) => [
+      String(task._id),
+      currentTaskCompletionMode(task),
+    ]),
+  );
 }
 
 export async function ensureDailyOccurrences(memberId: string, dateKey: string) {

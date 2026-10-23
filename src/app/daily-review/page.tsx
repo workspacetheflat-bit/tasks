@@ -5,8 +5,8 @@ import { isValidDateKey, dateKeyInZone, formatDateArabic } from "@/lib/date";
 import { connectToDatabase } from "@/lib/db";
 import { CourseBreak, DailyTaskOccurrence, Deduction, User } from "@/models";
 import { createDeductionAction, recordCourseCompletionAction, reviewCompletionAction, reviewTaskSubmissionAction } from "@/server/actions";
-import { ensureDailyOccurrences } from "@/server/queries";
-import { effectiveCompletionMode } from "@/lib/task-completion";
+import { ensureDailyOccurrences, getCurrentTaskCompletionModes } from "@/server/queries";
+import { isPendingReviewRequest } from "@/lib/task-completion";
 
 export const dynamic = "force-dynamic";
 
@@ -17,11 +17,24 @@ export default async function DailyReviewPage({ searchParams }: { searchParams: 
   await connectToDatabase();
   const member = await User.findOne({ role: "member", isActive: true }).select("_id displayName").lean();
   const { occurrences } = member ? await ensureDailyOccurrences(String(member._id), dateKey) : { occurrences: [] };
-  const reviewRequests = member
-    ? await DailyTaskOccurrence.find({ memberId: member._id, status: "needs_review", completionModeSnapshot: "review" })
+  const pendingOccurrences = member
+    ? await DailyTaskOccurrence.find({ memberId: member._id, status: "needs_review" })
       .sort({ dateKey: 1, createdAt: 1 })
       .lean()
     : [];
+  const completionModes = await getCurrentTaskCompletionModes([
+    ...occurrences.map((item) => item.taskId),
+    ...pendingOccurrences.map((item) => item.taskId),
+  ]);
+  const reviewRequests = pendingOccurrences.filter((item) =>
+    isPendingReviewRequest(
+      item.status,
+      completionModes.get(String(item.taskId)) ?? null,
+    ),
+  );
+  const unresolvedPendingCount = pendingOccurrences.filter((item) =>
+    !completionModes.has(String(item.taskId)),
+  ).length;
   const reviewRequestIds = new Set(reviewRequests.map((item) => String(item._id)));
   const regularOccurrences = occurrences.filter((item) => !reviewRequestIds.has(String(item._id)));
   const breaks = member ? await CourseBreak.find({ memberId: member._id, dateKey, status: "scheduled" }).populate("courseTaskId", "key nameAr").lean() : [];
@@ -34,6 +47,7 @@ export default async function DailyReviewPage({ searchParams }: { searchParams: 
       <PageHeading eyebrow="إدارة اليوم" title="مراجعة المهام" description="راجع حالة العضو، وسجّل سبباً قبل اقتراح أي خصم." />
       <Notice code={params.error || params.saved} />
       {!member && <div className="notice error">لا يوجد حساب عضو نشط. أنشئ الحساب الأولي قبل مراجعة المهام.</div>}
+      {unresolvedPendingCount > 0 && <div className="notice error">توجد {unresolvedPendingCount} طلبات معلقة لتعريفات مهام غير موجودة؛ لم تُعرض كطلبات قابلة للاعتماد.</div>}
       <section className="toolbar-card">
         <div><span className="eyebrow">التاريخ المحدد</span><strong>{formatDateArabic(dateKey)}</strong></div>
         <form action="/daily-review" className="inline-form"><label htmlFor="date">التاريخ</label><input id="date" name="date" type="date" defaultValue={dateKey} /><button className="button button-secondary" type="submit">عرض</button></form>
@@ -64,15 +78,18 @@ export default async function DailyReviewPage({ searchParams }: { searchParams: 
         {regularOccurrences.map((item) => {
           const exempt = breakTaskIds.has(String(item.taskId));
           const hasDeduction = deductionOccurrenceIds.has(String(item._id));
-          const reviewMode = effectiveCompletionMode(item.completionModeSnapshot) === "review";
+          const currentMode = completionModes.get(String(item.taskId)) ?? null;
+          const reviewMode = currentMode === "review";
+          const missingTaskDefinition = !completionModes.has(String(item.taskId));
           return <article className="panel review-card" key={String(item._id)}>
             <div className="panel-heading">
               <div><h2>{item.taskNameSnapshot}</h2><p className="muted">قيمة المهمة <Money amount={item.taskValueSnapshot} /> · الخصم المقترح <Money amount={item.taskValueSnapshot * item.deductionMultiplierSnapshot} /></p></div>
               {exempt ? <StatusBadge status="scheduled" /> : <StatusBadge status={item.status} />}
             </div>
             {exempt && <p className="break-label">معفاة في هذا اليوم فقط؛ لن ينشأ عنها خصم.</p>}
+            {!exempt && missingTaskDefinition && <p className="notice error">تعذر التحقق من تعريف المهمة؛ لا يمكن تغيير حالتها.</p>}
             {!exempt && <div className="review-actions">
-              {!reviewMode && <form action={reviewCompletionAction} className="review-form">
+              {!reviewMode && !missingTaskDefinition && <form action={reviewCompletionAction} className="review-form">
                 <input name="occurrenceId" type="hidden" value={String(item._id)} />
                 <label>تحديث الحالة<select name="status" defaultValue={item.status}><option value="incomplete">غير مكتملة</option><option value="completed">مكتملة</option><option value="needs_review">تحتاج مراجعة</option></select></label>
                 <label className="reason-field">سبب المراجعة (مطلوب)<input name="reason" required minLength={3} maxLength={500} placeholder="وضح سبب تأكيد أو تصحيح الحالة" /></label>

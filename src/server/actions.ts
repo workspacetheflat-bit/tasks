@@ -19,8 +19,9 @@ import {
 import {
   assertMemberCanCompleteDirectly,
   assertMemberCanRequestReview,
-  effectiveCompletionMode,
+  currentTaskCompletionMode,
   resolveReviewDecision,
+  taskRequiresReview,
   TaskCompletionPolicyError,
 } from "@/lib/task-completion";
 
@@ -54,6 +55,13 @@ async function writeAudit(
     after: details.after ?? null,
     reason: details.reason ?? "",
   });
+}
+
+async function getCurrentOccurrenceCompletionMode(taskId: unknown): Promise<"self" | "review"> {
+  const task = await TaskDefinition.findById(taskId).select("completionMode").lean();
+  const mode = currentTaskCompletionMode(task);
+  if (!mode) throw new TaskCompletionPolicyError("تعريف المهمة غير موجود؛ تعذر التحقق من طريقة الإكمال.");
+  return mode;
 }
 
 export async function loginAction(formData: FormData): Promise<void> {
@@ -108,14 +116,17 @@ export async function updateCompletionAction(formData: FormData): Promise<void> 
       memberId: toObjectId(user.id),
     });
     if (!occurrence) throw new Error("سجل المهمة غير موجود.");
-    assertMemberCanCompleteDirectly(occurrence.completionModeSnapshot);
+    const currentMode = await getCurrentOccurrenceCompletionMode(occurrence.taskId);
+    const completionMode = occurrence.status === "completed"
+      ? occurrence.completionModeSnapshot
+      : currentMode;
+    assertMemberCanCompleteDirectly(completionMode);
     const before = { status: occurrence.status, memberNote: occurrence.memberNote };
     const updated = await DailyTaskOccurrence.findOneAndUpdate(
       {
         _id: occurrence._id,
         memberId: toObjectId(user.id),
         status: occurrence.status,
-        $or: [{ completionModeSnapshot: "self" }, { completionModeSnapshot: { $exists: false } }],
       },
       {
         $set: {
@@ -160,13 +171,13 @@ export async function submitTaskReviewAction(formData: FormData): Promise<void> 
       memberId: toObjectId(user.id),
     });
     if (!occurrence) throw new Error("سجل المهمة غير موجود.");
-    assertMemberCanRequestReview(occurrence.completionModeSnapshot, occurrence.status);
+    const completionMode = await getCurrentOccurrenceCompletionMode(occurrence.taskId);
+    assertMemberCanRequestReview(completionMode, occurrence.status);
     const updated = await DailyTaskOccurrence.findOneAndUpdate(
       {
         _id: occurrence._id,
         memberId: toObjectId(user.id),
         status: "incomplete",
-        completionModeSnapshot: "review",
       },
       {
         $set: {
@@ -290,7 +301,8 @@ export async function reviewCompletionAction(formData: FormData): Promise<void> 
     await connectToDatabase();
     const occurrence = await DailyTaskOccurrence.findById(toObjectId(parsed.data.occurrenceId));
     if (!occurrence) throw new Error("سجل المهمة غير موجود.");
-    if (effectiveCompletionMode(occurrence.completionModeSnapshot) !== "self") {
+    const completionMode = await getCurrentOccurrenceCompletionMode(occurrence.taskId);
+    if (taskRequiresReview(completionMode)) {
       throw new TaskCompletionPolicyError("طلبات المهام التي تتطلب مراجعة تُعتمد من قسم طلبات المراجعة.");
     }
     const before = { status: occurrence.status, reviewNote: occurrence.reviewNote };
@@ -298,7 +310,6 @@ export async function reviewCompletionAction(formData: FormData): Promise<void> 
       {
         _id: occurrence._id,
         status: occurrence.status,
-        $or: [{ completionModeSnapshot: "self" }, { completionModeSnapshot: { $exists: false } }],
       },
       {
         $set: {
@@ -346,15 +357,19 @@ export async function reviewTaskSubmissionAction(formData: FormData): Promise<vo
     await connectToDatabase();
     const occurrence = await DailyTaskOccurrence.findById(toObjectId(parsed.data.occurrenceId));
     if (!occurrence) throw new Error("سجل المهمة غير موجود.");
+    const completionMode = await getCurrentOccurrenceCompletionMode(occurrence.taskId);
     const nextStatus = resolveReviewDecision(
       user.role,
-      occurrence.completionModeSnapshot,
+      completionMode,
       occurrence.status,
       parsed.data.decision,
     );
     const now = new Date();
     const updated = await DailyTaskOccurrence.findOneAndUpdate(
-      { _id: occurrence._id, status: "needs_review", completionModeSnapshot: "review" },
+      {
+        _id: occurrence._id,
+        status: "needs_review",
+      },
       {
         $set: {
           status: nextStatus,
@@ -603,6 +618,7 @@ export async function createTaskDefinitionAction(formData: FormData): Promise<vo
   }
   revalidatePath("/settings");
   revalidatePath("/dashboard");
+  revalidatePath("/daily-review");
   revalidatePath("/my-tasks");
   redirect("/settings?saved=1");
 }
@@ -669,6 +685,7 @@ export async function updateTaskSettingsAction(formData: FormData): Promise<void
   }
   revalidatePath("/settings");
   revalidatePath("/dashboard");
+  revalidatePath("/daily-review");
   revalidatePath("/my-tasks");
   redirect("/settings?saved=1");
 }

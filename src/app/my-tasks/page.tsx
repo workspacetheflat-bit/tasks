@@ -4,8 +4,8 @@ import { requireUser } from "@/lib/auth";
 import { dateKeyInZone, formatDateArabic, isValidDateKey } from "@/lib/date";
 import { connectToDatabase } from "@/lib/db";
 import { CourseCompletion, Deduction } from "@/models";
-import { ensureDailyOccurrences, getBreaks } from "@/server/queries";
-import { effectiveCompletionMode } from "@/lib/task-completion";
+import { ensureDailyOccurrences, getBreaks, getCurrentTaskCompletionModes } from "@/server/queries";
+import { occurrenceCompletionMode } from "@/lib/task-completion";
 import {
   recordCourseCompletionAction,
   submitTaskReviewAction,
@@ -19,6 +19,7 @@ export default async function MemberTasksPage({ searchParams }: { searchParams: 
   const params = await searchParams;
   const dateKey = params.date && isValidDateKey(params.date) ? params.date : dateKeyInZone();
   const { occurrences } = await ensureDailyOccurrences(user.id, dateKey);
+  const completionModes = await getCurrentTaskCompletionModes(occurrences.map((item) => item.taskId));
   const breaks = await getBreaks(user.id, dateKey);
   const breakTaskKeys = new Set(breaks.map((item) => (item.courseTaskId as unknown as { key: string }).key));
   const required = occurrences.filter((item) => !breakTaskKeys.has(item.taskKeySnapshot));
@@ -39,7 +40,15 @@ export default async function MemberTasksPage({ searchParams }: { searchParams: 
       <section className="task-list">
         {occurrences.map((item) => {
           const exempt = breakTaskKeys.has(item.taskKeySnapshot);
-          const completionMode = effectiveCompletionMode(item.completionModeSnapshot);
+          const taskId = String(item.taskId);
+          const completionMode = completionModes.has(taskId)
+            ? occurrenceCompletionMode(
+              item.status,
+              completionModes.get(taskId) ?? null,
+              item.completionModeSnapshot,
+            )
+            : null;
+          const requiresReview = completionMode === "review";
           return <article className={`task-card ${item.status === "completed" ? "task-done" : ""}`} key={String(item._id)}>
             <div className="task-card-main">
               <div className="task-title-row"><h2>{item.taskNameSnapshot}</h2>{exempt ? <StatusBadge status="scheduled" /> : <StatusBadge status={item.status} />}</div>
@@ -53,12 +62,13 @@ export default async function MemberTasksPage({ searchParams }: { searchParams: 
                 {item.status === "completed" ? "إلغاء الإكمال" : "تمت المهمة"}
               </button>
             </form>}
-            {!exempt && completionMode === "review" && item.status === "incomplete" && <form action={submitTaskReviewAction} className="task-action-form">
+            {!exempt && requiresReview && item.status === "incomplete" && <form action={submitTaskReviewAction} className="task-action-form">
               <input name="occurrenceId" type="hidden" value={String(item._id)} />
               <label className="note-label">ملاحظة للمسؤول (اختياري)<input name="note" maxLength={500} defaultValue={item.memberNote} placeholder="أضيفي تفاصيل الإتمام" /></label>
               <button className="button button-primary" type="submit">طلب مراجعة</button>
             </form>}
-            {!exempt && completionMode === "review" && item.status === "needs_review" && <p className="muted">تم إرسال المهمة، وهي بانتظار مراجعة المسؤول.</p>}
+            {!exempt && requiresReview && item.status === "needs_review" && <p className="muted">تم إرسال المهمة، وهي بانتظار مراجعة المسؤول.</p>}
+            {!exempt && completionMode === null && item.status !== "completed" && <p className="notice error">تعذر التحقق من إعداد المهمة. تواصل مع المسؤول.</p>}
           </article>;
         })}
         {occurrences.length === 0 && <EmptyState>لا توجد مهام نشطة لهذا اليوم.</EmptyState>}

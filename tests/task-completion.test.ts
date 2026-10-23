@@ -4,10 +4,14 @@ import { SEED_TASKS, TASK_KEYS } from "../src/lib/config";
 import {
   assertMemberCanCompleteDirectly,
   assertMemberCanRequestReview,
+  currentTaskCompletionMode,
   effectiveCompletionMode,
+  isPendingReviewRequest,
+  occurrenceCompletionMode,
   resolveReviewDecision,
   TaskCompletionPolicyError,
 } from "../src/lib/task-completion";
+import { taskOccurrenceSnapshot } from "../src/lib/finance";
 import { DailyTaskOccurrence, TaskDefinition } from "../src/models";
 
 describe("required task completion modes", () => {
@@ -21,6 +25,36 @@ describe("required task completion modes", () => {
     expect(() => assertMemberCanCompleteDirectly("review")).toThrow(TaskCompletionPolicyError);
     expect(() => assertMemberCanRequestReview("review", "incomplete")).not.toThrow();
     expect(() => assertMemberCanRequestReview("review", "needs_review")).toThrow(TaskCompletionPolicyError);
+  });
+
+  it("uses current task mode for open occurrences when settings change either direction", () => {
+    expect(occurrenceCompletionMode("incomplete", "review", "self")).toBe("review");
+    expect(occurrenceCompletionMode("needs_review", "self", "review")).toBe("self");
+    expect(() => assertMemberCanCompleteDirectly(occurrenceCompletionMode("incomplete", "review", "self")!))
+      .toThrow(TaskCompletionPolicyError);
+    expect(() => assertMemberCanCompleteDirectly(occurrenceCompletionMode("incomplete", "self", "review")!))
+      .not.toThrow();
+  });
+
+  it("preserves completed occurrence mode history when task settings change", () => {
+    const occurrence = {
+      status: "completed" as const,
+      completionModeSnapshot: "self",
+      completedAt: new Date("2026-10-23T12:00:00.000Z"),
+      reviewedAt: null,
+      reviewedBy: null,
+      taskValueSnapshot: 40,
+    };
+    const before = { ...occurrence };
+    expect(occurrenceCompletionMode(occurrence.status, "review", occurrence.completionModeSnapshot)).toBe("self");
+    expect(occurrence).toEqual(before);
+  });
+
+  it("lists pending admin reviews according to the current task mode, not the old snapshot", () => {
+    expect(isPendingReviewRequest("needs_review", currentTaskCompletionMode({ completionMode: "review" }))).toBe(true);
+    expect(isPendingReviewRequest("needs_review", currentTaskCompletionMode({ completionMode: "self" }))).toBe(false);
+    expect(isPendingReviewRequest("incomplete", currentTaskCompletionMode({ completionMode: "review" }))).toBe(false);
+    expect(currentTaskCompletionMode(null)).toBeNull();
   });
 
   it("allows only an admin to decide a pending review-mode submission", () => {
@@ -62,5 +96,15 @@ describe("required task completion modes", () => {
     });
     expect(task.completionMode).toBe("self");
     expect(occurrence.completionModeSnapshot).toBe("self");
+  });
+
+  it("snapshots the currently configured mode for future occurrences", () => {
+    expect(taskOccurrenceSnapshot({
+      key: TASK_KEYS.scrolling,
+      nameAr: "الالتزام بالسكروولينج",
+      dailyValue: 40,
+      deductionMultiplier: 2,
+      completionMode: "review",
+    }).completionModeSnapshot).toBe("review");
   });
 });
